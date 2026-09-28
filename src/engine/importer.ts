@@ -291,7 +291,7 @@ export class BackgroundImporter {
   }
 
   /**
-   * 零内存占用逐对象流式解析 JSON (支持 NDJSON 与超大 JSON 数组流式解耦，绝不 OOM)
+   * 零内存占用逐对象流式解析 JSON (完美支持 JSON 数组 [...]、NDJSON 与标准对象流)
    */
   private async processJsonStream(db: Database, job: ImportJob, onSaveDisk: () => void) {
     let table: any = null;
@@ -299,7 +299,6 @@ export class BackgroundImporter {
     const batchSize = 2500;
     let batchBuffer: any[] = [];
 
-    // 流式状态机：逐字节解析顶层 JSON 实体对象，内存占用恒定
     const stream = fs.createReadStream(job.tempFilePath, { encoding: 'utf-8', highWaterMark: 128 * 1024 });
     let buffer = '';
     let inString = false;
@@ -323,7 +322,7 @@ export class BackgroundImporter {
           inString = !inString;
         } else if (!inString) {
           if (ch === '{') {
-            if (depth === 0) {
+            if (objStart === -1) {
               objStart = i;
             }
             depth++;
@@ -337,7 +336,6 @@ export class BackgroundImporter {
                 try {
                   const rowObj = JSON.parse(objStr);
                   if (rowObj && typeof rowObj === 'object' && !Array.isArray(rowObj)) {
-                    // 首次命中对象时，自动推断列定义并创建目标表
                     if (!table) {
                       table = db.hasTable(job.tableName) ? db.getTable(job.tableName) : null;
                       if (!table) {
@@ -347,7 +345,7 @@ export class BackgroundImporter {
                           type: typeof rowObj[k] === 'number' ? ('number' as const) : typeof rowObj[k] === 'boolean' ? ('boolean' as const) : ('string' as const),
                           isPrimaryKey: idx === 0,
                           autoIncrement: idx === 0 && typeof rowObj[k] === 'number',
-                          isSecondaryIndex: false // 默认不创建额外二级索引，精简空间
+                          isSecondaryIndex: false
                         }));
                         table = db.createTable({
                           name: job.tableName,
@@ -379,6 +377,8 @@ export class BackgroundImporter {
 
                 buffer = buffer.substring(i + 1);
                 i = -1;
+                depth = 0;
+                objStart = -1;
               }
             }
           }

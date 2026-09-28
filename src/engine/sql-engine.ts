@@ -548,9 +548,23 @@ export class SqlParser {
     let limit: number | undefined;
     let offset: number | undefined;
     if (this.matchKeyword('LIMIT')) {
-      limit = parseInt(this.expect('NUMBER', undefined, 'LIMIT 必须是数字').value, 10);
-      if (this.matchKeyword('OFFSET')) {
-        offset = parseInt(this.expect('NUMBER', undefined, 'OFFSET 必须是数字').value, 10);
+      const firstNumToken = this.expect('NUMBER', undefined, 'LIMIT 必须是数字');
+      const firstNum = parseInt(firstNumToken.value, 10);
+
+      if (this.match('PUNCTUATION', ',')) {
+        // MySQL 语法: LIMIT offset, count (例如 LIMIT 1, 102)
+        offset = firstNum;
+        const countToken = this.expect('NUMBER', undefined, 'LIMIT 逗号后必须是数字 (count)');
+        limit = parseInt(countToken.value, 10);
+      } else {
+        // 标准 SQL 语法: LIMIT count [OFFSET offset]
+        limit = firstNum;
+        if (this.matchKeyword('OFFSET')) {
+          offset = parseInt(this.expect('NUMBER', undefined, 'OFFSET 必须是数字').value, 10);
+        } else if (this.match('PUNCTUATION', ',')) {
+          const offsetToken = this.expect('NUMBER', undefined, 'LIMIT 逗号后必须是数字 (offset)');
+          offset = parseInt(offsetToken.value, 10);
+        }
       }
     }
 

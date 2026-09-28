@@ -192,19 +192,8 @@ export class Table<T extends Record<string, any> = Record<string, any>> {
       }
     }
 
-    // 6. 维护写入主键 B-树索引 (内存与磁盘页双层)
+    // 6. 维护写入主键 B-树索引 (内存加速)
     this.pkBTree.insert(pkValue, row);
-    try {
-      this.pkDiskBTree.insert(pkValue, pkValue);
-      for (const [colName, diskTree] of this.secondaryDiskIndices.entries()) {
-        const val = rowRecord[colName];
-        if (val !== undefined && val !== null) {
-          diskTree.insert(val, pkValue);
-        }
-      }
-    } catch {
-      // 容错防护
-    }
 
     // 7. 存入内存记录表
     this.records.set(pkValue, row);
@@ -284,19 +273,8 @@ export class Table<T extends Record<string, any> = Record<string, any>> {
       }
     }
 
-    // 从主键 B-树中删除节点 (内存与磁盘页)
+    // 从主键 B-树中删除节点 (内存)
     this.pkBTree.delete(pkValue);
-    try {
-      this.pkDiskBTree.delete(pkValue);
-      for (const [colName, diskTree] of this.secondaryDiskIndices.entries()) {
-        const val = existing[colName];
-        if (val !== undefined && val !== null) {
-          diskTree.delete(val);
-        }
-      }
-    } catch {
-      // 容错防护
-    }
 
     // 从主存储表中移除
     return this.records.delete(pkValue);
