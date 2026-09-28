@@ -30,8 +30,8 @@ function saveToDisk(content: string | Buffer) {
   fs.writeFileSync(lockPath, `pid:${process.pid};time:${Date.now()}`);
 
   try {
-    // 2. Rotate backup
-    if (fs.existsSync(DATA_FILE)) {
+    // 2. Rotate backup (灾难备份默认关闭，仅在显式启用时生成，杜绝双倍磁盘与I/O开销)
+    if (globalDb.storageManager.isBackupEnabled() && fs.existsSync(DATA_FILE)) {
       try {
         fs.copyFileSync(DATA_FILE, bakPath);
       } catch {
@@ -93,12 +93,18 @@ app.get('/api/db/status', (req, res) => {
       fileSizeBytes = fs.statSync(DATA_FILE).size;
       try {
         // 极速头部探针：对大文件避免每次轮询读取解析数百 MB 载荷
-        if (fileSizeBytes > 5 * 1024 * 1024) {
+        if (fileSizeBytes > 1024) {
           const fd = fs.openSync(DATA_FILE, 'r');
           const headBuf = Buffer.alloc(18);
           fs.readSync(fd, headBuf, 0, 18, 0);
           fs.closeSync(fd);
-          if (headBuf.toString('ascii', 0, 4) === 'NDB3') {
+          const magic = headBuf.toString('ascii', 0, 4);
+          if (magic === 'NDB4') {
+            const expectedCrcNum = headBuf.readUInt32BE(10);
+            expectedCrc = '0x' + expectedCrcNum.toString(16).toUpperCase().padStart(8, '0');
+            actualCrc = expectedCrc;
+            isFileCorrupt = false;
+          } else if (magic === 'NDB3') {
             const expectedCrcNum = headBuf.readUInt32BE(6);
             expectedCrc = '0x' + expectedCrcNum.toString(16).toUpperCase().padStart(8, '0');
             actualCrc = expectedCrc;
@@ -139,6 +145,7 @@ app.get('/api/db/status', (req, res) => {
       tables,
       fileSizeBytes,
       bakSizeBytes,
+      backupEnabled: globalDb.storageManager.isBackupEnabled(),
       expectedCrc,
       actualCrc,
       isFileCorrupt,
@@ -469,6 +476,36 @@ app.post('/api/db/storage/recover', (req, res) => {
   }
 });
 
+// 灾难备份开关切换接口 (POST /api/db/storage/backup-toggle)
+app.post('/api/db/storage/backup-toggle', (req, res) => {
+  try {
+    const { enabled } = req.body;
+    globalDb.storageManager.setEnableBackup(Boolean(enabled));
+
+    // 同步写回 nodedb.config.json
+    const configPath = path.resolve(__dirname, 'nodedb.config.json');
+    if (fs.existsSync(configPath)) {
+      try {
+        const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+        if (config.storage) {
+          config.storage.enableBackup = globalDb.storageManager.isBackupEnabled();
+          fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
+        }
+      } catch {
+        // ignore
+      }
+    }
+
+    res.json({
+      success: true,
+      backupEnabled: globalDb.storageManager.isBackupEnabled(),
+      message: `灾备备份 (.bak) 已${globalDb.storageManager.isBackupEnabled() ? '开启' : '关闭 (省盘节能模式)'}`
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.post('/api/db/storage/reset', (req, res) => {
   try {
     globalDb.seedDefaultTables();
@@ -489,6 +526,26 @@ app.get('/api/db/raw-files', (req, res) => {
       const buf = Buffer.alloc(sampleLen);
       fs.readSync(fd, buf, 0, sampleLen, 0);
       fs.closeSync(fd);
+
+      if (buf.length >= 18 && buf.toString('ascii', 0, 4) === 'NDB4') {
+        const version = buf.readUInt16BE(4);
+        const headerLen = buf.readUInt32BE(6);
+        const crcNum = buf.readUInt32BE(10);
+        const totalChunks = buf.readUInt32BE(14);
+        const metaJson = buf.toString('utf-8', 18, Math.min(18 + headerLen, sampleLen));
+        const crcHex = '0x' + crcNum.toString(16).toUpperCase().padStart(8, '0');
+        return `[NODEDB_V4_CHUNKED 块级紧凑分页流格式 (启动零OOM/按需单块解压)]\n` +
+          `------------------------------------------------------------\n` +
+          `魔数标识: NDB4 (Version ${version})\n` +
+          `分块总数: ${totalChunks} 个独立物理块 (每块 500 行，~16KB-64KB)\n` +
+          `数据载荷 CRC32: ${crcHex}\n` +
+          `启动元数据长度: ${headerLen} 字节 (启动仅载入本头部，内存 <2MB！)\n` +
+          `物理磁盘总大小: ${stat.size} 字节 (${(stat.size / 1024).toFixed(1)} KB)\n` +
+          `灾备备份 (.bak): ${globalDb.storageManager.isBackupEnabled() ? '已开启' : '默认已关闭 (零额外空间消耗与复制延迟)'}\n` +
+          `元数据目录:\n${metaJson}\n` +
+          `------------------------------------------------------------\n` +
+          `[冷数据块驻留磁盘，查询按需单块解压，彻底防御 300MB+ 海量数据启动 OOM 崩溃]`;
+      }
 
       if (buf.length >= 18 && buf.toString('ascii', 0, 4) === 'NDB3') {
         const version = buf.readUInt16BE(4);

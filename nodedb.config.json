@@ -7,6 +7,9 @@
     "enableCrc32": true,
     "enableFsync": true,
     "enableAtomicWrite": true,
+    "enableBackup": false,
+    "chunkRowSize": 500,
+    "maxMemoryMb": 32,
     "lockTimeoutMs": 30000
   },
   "index": {

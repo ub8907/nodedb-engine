@@ -38,6 +38,7 @@ export default function App() {
   const [dbStatus, setDbStatus] = useState<{
     fileSizeBytes: number;
     bakSizeBytes: number;
+    backupEnabled?: boolean;
     expectedCrc: string;
     actualCrc: string;
     isFileCorrupt: boolean;
@@ -46,6 +47,7 @@ export default function App() {
   }>({
     fileSizeBytes: 0,
     bakSizeBytes: 0,
+    backupEnabled: false,
     expectedCrc: '0x00000000',
     actualCrc: '0x00000000',
     isFileCorrupt: false,
@@ -69,6 +71,7 @@ export default function App() {
       setDbStatus({
         fileSizeBytes: data.fileSizeBytes,
         bakSizeBytes: data.bakSizeBytes,
+        backupEnabled: data.backupEnabled !== undefined ? data.backupEnabled : false,
         expectedCrc: data.expectedCrc,
         actualCrc: data.actualCrc,
         isFileCorrupt: data.isFileCorrupt,

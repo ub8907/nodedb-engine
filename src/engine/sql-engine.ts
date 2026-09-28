@@ -431,6 +431,16 @@ export class SqlParser {
     throw new Error(errMsg || `语法错误: 预期 ${value || type}, 但遇到了 "${this.peek().value}"`);
   }
 
+  private parseColumnIdentifier(errMsg: string = '预期列名'): Token {
+    if (this.isAtEnd()) throw new Error(errMsg);
+    const token = this.peek();
+    const reservedClauses = new Set(['FROM', 'WHERE', 'JOIN', 'INNER', 'LEFT', 'CROSS', 'ON', 'GROUP', 'ORDER', 'BY', 'LIMIT', 'OFFSET', 'UNION', 'HAVING', 'SET', 'VALUES']);
+    if (token.type === 'IDENTIFIER' || (token.type === 'KEYWORD' && !reservedClauses.has(token.value.toUpperCase()))) {
+      return this.advance();
+    }
+    throw new Error(errMsg || `语法错误: 预期列名, 但遇到了 "${this.peek().value}"`);
+  }
+
   private parseSelect(isExplain: boolean): SelectStatement {
     // 1. 解析 SELECT 列列表
     const columns: SelectColumn[] = [];
@@ -527,7 +537,7 @@ export class SqlParser {
       this.expect('KEYWORD', 'BY', 'ORDER 后必须跟 BY');
       orderBy = [];
       do {
-        const colIdent = this.expect('IDENTIFIER').value;
+        const colIdent = this.parseColumnIdentifier('ORDER BY 预期列名').value;
         let direction: 'ASC' | 'DESC' = 'ASC';
         if (this.matchKeyword('DESC')) {
           direction = 'DESC';
@@ -592,7 +602,7 @@ export class SqlParser {
         if (this.match('OPERATOR', '*')) {
           arg = '*';
         } else {
-          arg = this.expect('IDENTIFIER', undefined, `${agg} 函数内部预期参数列名`).value;
+          arg = this.parseColumnIdentifier(`${agg} 函数内部预期参数列名`).value;
         }
         this.expect('PUNCTUATION', ')', `${agg} 函数缺少闭合括号 )`);
 
@@ -617,7 +627,7 @@ export class SqlParser {
       return { expr: '*', name: '*' };
     }
 
-    const colToken = this.expect('IDENTIFIER', undefined, '预期列名');
+    const colToken = this.parseColumnIdentifier('预期列名');
     let expr = colToken.value;
     let table: string | undefined;
     let name = expr;
@@ -640,7 +650,7 @@ export class SqlParser {
 
   private parseCondition(): BinaryCondition {
     // 解析一个原子条件，并支持链式 AND / OR
-    const leftToken = this.expect('IDENTIFIER', undefined, '条件左侧预期列名');
+    const leftToken = this.parseColumnIdentifier('条件左侧预期列名');
     const leftParts = leftToken.value.split('.');
     const left = leftParts.length === 2
       ? { table: leftParts[0], column: leftParts[1] }
@@ -1228,7 +1238,7 @@ export class SqlExecutor {
         const dir = stmt.orderBy[0].direction || 'ASC';
 
         if (orderCol === fromTable.pkColumn) {
-          // 命中最强优化：主键 B-树游标有序扫描，直接取 offset + limit 行，早停退出！
+          // 命中最强优化：主键游标有序扫描，直接取 offset + limit 行，早停退出！
           plan.push({
             operation: 'INDEX_ORDERED_SCAN',
             table: fromAlias,
@@ -1236,8 +1246,8 @@ export class SqlExecutor {
             detail: `命中主键自建平衡 B-树有序游标扫描 (${dir}): LIMIT ${limit} OFFSET ${offset}，早停跳过全表全排序`,
             estimatedCost: `O(${offset} + ${limit})`
           });
-          const entries = fromTable.pkIndex.inOrderCursor(offset, limit, dir);
-          intermediateRows = entries.map(e => this.prefixRow(e.value, fromAlias));
+          const pagedRes = fromTable.findPaged({ page: 1, pageSize: offset + limit, sortBy: orderCol, sortOrder: dir });
+          intermediateRows = pagedRes.rows.slice(offset).map(r => this.prefixRow(r, fromAlias));
           indexOrderPushedDown = true;
         } else if (fromTable.secondaryIndexMap.has(orderCol)) {
           // 命中二级多值 B-树有序游标扫描！
@@ -1249,7 +1259,7 @@ export class SqlExecutor {
             estimatedCost: `O(log N + ${offset} + ${limit})`
           });
           const pks = fromTable.secondaryIndexMap.get(orderCol)!.inOrderPkCursor(offset, limit, dir);
-          intermediateRows = pks.map(pk => fromTable.pkIndex.search(pk).value).filter(Boolean).map(r => this.prefixRow(r, fromAlias));
+          intermediateRows = pks.map(pk => fromTable.findById(pk).row).filter(Boolean).map(r => this.prefixRow(r, fromAlias));
           indexOrderPushedDown = true;
         }
       } else if (!stmt.orderBy && stmt.limit !== undefined) {
@@ -1261,8 +1271,8 @@ export class SqlExecutor {
           detail: `直接通过主键 B-树游标读取 LIMIT ${limit} OFFSET ${offset}，免全表加载`,
           estimatedCost: `O(${offset} + ${limit})`
         });
-        const entries = fromTable.pkIndex.inOrderCursor(offset, limit, 'ASC');
-        intermediateRows = entries.map(e => this.prefixRow(e.value, fromAlias));
+        const pagedRes = fromTable.findPaged({ page: 1, pageSize: offset + limit, sortBy: fromTable.pkColumn, sortOrder: 'ASC' });
+        intermediateRows = pagedRes.rows.slice(offset).map(r => this.prefixRow(r, fromAlias));
         indexOrderPushedDown = true;
       }
     }
@@ -1412,17 +1422,17 @@ export class SqlExecutor {
     // 1. 尝试主键精确等值加速: WHERE id = 5
     if (where && !where.next && where.operator === '=' && where.left.column === pkCol && where.right.literal !== undefined) {
       const searchPk = where.right.literal;
-      const btreeRes = table.pkIndex.search(searchPk);
+      const found = table.findById(searchPk);
       plan.push({
         operation: 'INDEX_SEEK',
         table: alias,
         strategy: 'PK_BTREE',
-        detail: `命中主键自建平衡 B-树索引 (Order 3) 点查: ${pkCol} = ${searchPk}，仅访问 ${btreeRes.visitedNodes.length} 个树节点`,
+        detail: `命中主键自建平衡 B-树索引 (Order 3) 点查: ${pkCol} = ${searchPk}，仅访问 ${found.stats.visitedNodes.length} 个树节点`,
         estimatedCost: 'O(log N)'
       });
 
-      if (btreeRes.value) {
-        return [this.prefixRow(btreeRes.value, alias)];
+      if (found.row) {
+        return [this.prefixRow(found.row, alias)];
       }
       return [];
     }
@@ -1431,7 +1441,7 @@ export class SqlExecutor {
     if (where && !where.next && where.operator === '=' && where.right.literal !== undefined) {
       const colName = where.left.column;
       const uniqueIdx = table.uniqueIndexMap.get(colName);
-      if (uniqueIdx) {
+      if (uniqueIdx && uniqueIdx.size > 0) {
         const pk = uniqueIdx.get(where.right.literal);
         plan.push({
           operation: 'HASH_SEEK',
@@ -1442,7 +1452,7 @@ export class SqlExecutor {
         });
 
         if (pk !== undefined) {
-          const rec = table.pkIndex.search(pk).value;
+          const rec = table.findById(pk).row;
           return rec ? [this.prefixRow(rec, alias)] : [];
         }
         return [];
@@ -1450,7 +1460,7 @@ export class SqlExecutor {
     }
 
     // 3. 尝试二级多值 B-树区间范围与等值加速: WHERE status = 'PAID' 或 WHERE amount BETWEEN 200 AND 500
-    if (where && !where.next && where.left.column && table.secondaryIndexMap.has(where.left.column)) {
+    if (where && !where.next && where.left.column && table.secondaryIndexMap.has(where.left.column) && table.secondaryIndexMap.get(where.left.column)!.size > 0) {
       const colName = where.left.column;
       const secIdx = table.secondaryIndexMap.get(colName)!;
 
@@ -1468,7 +1478,7 @@ export class SqlExecutor {
 
         const rows: any[] = [];
         searchRes.pks.forEach((pk: any) => {
-          const rec = table.pkIndex.search(pk).value;
+          const rec = table.findById(pk).row;
           if (rec) rows.push(this.prefixRow(rec, alias));
         });
         return rows;
@@ -1489,7 +1499,7 @@ export class SqlExecutor {
 
         const rows: any[] = [];
         rangeRes.pks.forEach((pk: any) => {
-          const rec = table.pkIndex.search(pk).value;
+          const rec = table.findById(pk).row;
           if (rec) rows.push(this.prefixRow(rec, alias));
         });
         return rows;
@@ -1514,7 +1524,7 @@ export class SqlExecutor {
 
         const rows: any[] = [];
         rangeRes.pks.forEach((pk: any) => {
-          const rec = table.pkIndex.search(pk).value;
+          const rec = table.findById(pk).row;
           if (rec) rows.push(this.prefixRow(rec, alias));
         });
         return rows;
@@ -1901,14 +1911,16 @@ export class SqlExecutor {
    * 辅助方法：解析行中带有或不带表前缀的字段值
    */
   private resolveFieldValue(row: any, table: string | undefined, column: string): any {
+    if (!row) return undefined;
     if (table) {
       const qualified = `${table}.${column}`;
       if (row[qualified] !== undefined) return row[qualified];
     }
     if (row[column] !== undefined) return row[column];
-    // 遍历匹配后缀为 .column 的项
+    const lowerCol = column.toLowerCase();
     for (const key of Object.keys(row)) {
-      if (key.endsWith(`.${column}`)) {
+      const lowerKey = key.toLowerCase();
+      if (lowerKey === lowerCol || lowerKey.endsWith(`.${lowerCol}`)) {
         return row[key];
       }
     }

@@ -8,6 +8,7 @@ interface StorageLabProps {
   status: {
     fileSizeBytes: number;
     bakSizeBytes: number;
+    backupEnabled?: boolean;
     expectedCrc: string;
     actualCrc: string;
     isFileCorrupt: boolean;
@@ -36,6 +37,26 @@ export const StorageLab: React.FC<StorageLabProps> = ({
   const [loadingRaw, setLoadingRaw] = useState(false);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [processing, setProcessing] = useState(false);
+
+  const handleToggleBackup = async (enable: boolean) => {
+    setProcessing(true);
+    try {
+      const res = await fetch('/api/db/storage/backup-toggle', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: enable })
+      });
+      const data = await res.json();
+      onRefresh();
+      setActionMessage(lang === 'zh'
+        ? (enable ? '已开启灾备备份：下次保存时将自动生成 .bak 镜像副本。' : '已默认关闭灾备备份：省盘节能，零额外物理复制 I/O 延迟。')
+        : (enable ? 'Disaster backup (.bak) enabled.' : 'Disaster backup disabled by default (saves disk space & I/O).'));
+    } catch (err: any) {
+      console.error(err);
+    } finally {
+      setProcessing(false);
+    }
+  };
 
   const fetchRawFiles = async () => {
     setLoadingRaw(true);
@@ -186,13 +207,24 @@ export const StorageLab: React.FC<StorageLabProps> = ({
             </div>
           </div>
 
-          <div className="p-3 rounded bg-slate-950/70 border border-slate-800">
-            <div className="text-[11px] text-slate-400 font-medium">{t.layer3}</div>
-            <div className="text-xs font-mono text-sky-400 font-bold mt-1 flex items-center gap-1">
-              <CheckCircle2 className="w-3.5 h-3.5" />
-              <span>.bak ready</span>
+          <div className="p-3 rounded bg-slate-950/70 border border-slate-800 flex flex-col justify-between">
+            <div>
+              <div className="text-[11px] text-slate-400 font-medium">{t.layer3}</div>
+              <div className={`text-xs font-mono font-bold mt-1 flex items-center gap-1 ${status.backupEnabled ? 'text-sky-400' : 'text-slate-400'}`}>
+                <CheckCircle2 className="w-3.5 h-3.5" />
+                <span>{status.backupEnabled ? (lang === 'zh' ? '已开启' : 'Enabled') : (lang === 'zh' ? '默认关闭' : 'Disabled')}</span>
+              </div>
+              <div className="text-[10px] text-slate-500 font-mono mt-0.5 truncate">
+                {status.backupEnabled ? `${status.bakSizeBytes} B` : (lang === 'zh' ? '省盘节能 0额外开销' : '0 B (saves disk)')}
+              </div>
             </div>
-            <div className="text-[10px] text-slate-500 font-mono mt-0.5">{status.bakSizeBytes} bytes</div>
+            <button
+              onClick={() => handleToggleBackup(!status.backupEnabled)}
+              disabled={processing}
+              className="mt-2 text-[10px] font-semibold text-indigo-400 hover:text-indigo-300 underline cursor-pointer text-left"
+            >
+              {status.backupEnabled ? (lang === 'zh' ? '点击关闭备份' : 'Disable .bak') : (lang === 'zh' ? '点击开启备份' : 'Enable .bak')}
+            </button>
           </div>
 
           <div className="p-3 rounded bg-slate-950/70 border border-slate-800">
@@ -214,12 +246,12 @@ export const StorageLab: React.FC<StorageLabProps> = ({
           </div>
 
           <div className="p-3 rounded bg-slate-950/70 border border-slate-800">
-            <div className="text-[11px] text-slate-400 font-medium">{t.layer6}</div>
-            <div className="text-xs font-mono text-purple-400 font-bold mt-1 flex items-center gap-1">
+            <div className="text-[11px] text-slate-400 font-medium">{lang === 'zh' ? 'NDB4 块级流加载' : 'NDB4 Chunked'}</div>
+            <div className="text-xs font-mono text-emerald-400 font-bold mt-1 flex items-center gap-1">
               <Cpu className="w-3.5 h-3.5" />
-              <span>On Startup</span>
+              <span>&lt; 2MB RAM</span>
             </div>
-            <div className="text-[10px] text-slate-500 mt-0.5">Zero pointer drift</div>
+            <div className="text-[10px] text-slate-500 mt-0.5">{lang === 'zh' ? '按需单块解压防OOM' : 'Zero-OOM on-demand'}</div>
           </div>
         </div>
       </div>

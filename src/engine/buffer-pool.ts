@@ -91,6 +91,18 @@ export class BufferPoolManager {
     return BufferPoolManager.instance;
   }
 
+  public recordHit(): void {
+    this.stats.hits++;
+  }
+
+  public recordMiss(): void {
+    this.stats.misses++;
+  }
+
+  public recordDiskRead(): void {
+    this.stats.diskReads++;
+  }
+
   /**
    * 动态调整内存预算限制 (Memory Optimization)
    * 若缩小内存导致超出容量，自动按 LRU 刷盘并驱逐页面

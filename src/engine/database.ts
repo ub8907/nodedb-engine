@@ -31,11 +31,28 @@ export class Database {
 
     if (result.success && result.source !== 'EMPTY') {
       this.tables.clear();
-      for (const [name, tableData] of Object.entries(result.payload.tables)) {
-        const table = new Table(tableData.schema, tableData.next_id);
-        table.loadData(tableData.records, tableData.next_id);
-        this.tables.set(name, table);
+
+      // V4 块级流格式：零全量记录灌入内存，仅加载分块元数据！
+      if (result.isChunked && result.catalog) {
+        for (const [name, cat] of Object.entries(result.catalog)) {
+          const table = new Table(cat.schema, cat.next_id);
+          table.initChunks(cat.chunks, cat.rowCount, this.storage);
+          this.tables.set(name, table);
+        }
+      } else {
+        // 老版本兼容：逐表加载
+        for (const [name, tableData] of Object.entries(result.payload.tables)) {
+          const table = new Table(tableData.schema, tableData.next_id);
+          if (tableData.chunks && tableData.chunks.length > 0) {
+            table.initChunks(tableData.chunks, tableData.rowCount || tableData.records.length, this.storage);
+          } else {
+            table.loadData(tableData.records, tableData.next_id);
+          }
+          table.storageManager = this.storage;
+          this.tables.set(name, table);
+        }
       }
+
       this.isInitialized = true;
       return result;
     }
@@ -55,6 +72,7 @@ export class Database {
       throw new Error(`数据表 "${schema.name}" 已存在。`);
     }
     const table = new Table(schema, initialNextId);
+    table.storageManager = this.storage;
     this.tables.set(schema.name, table);
     return table;
   }
@@ -85,8 +103,7 @@ export class Database {
   }
 
   /**
-   * 原子持久化保存全量数据表至磁盘
-   * 自动附带 CRC32 头部、fsync 硬件刷盘与 .bak 轮转
+   * 原子持久化保存全量数据表至磁盘 (NDB4 块级流，按需写 .bak)
    */
   public save(): { crc: string; sizeBytes: number } {
     const payload: StoragePayload = {
@@ -94,26 +111,17 @@ export class Database {
     };
 
     for (const [name, table] of this.tables.entries()) {
-      payload.tables[name] = table.serializeForStorage();
+      payload.tables[name] = table.serializeForStorage() as any;
     }
 
     return this.storage.saveAtomic(payload);
   }
 
   /**
-   * 强制从磁盘重新加载全量数据并执行 CRC32 校验与内存索引重建
+   * 强制从磁盘重新加载全量数据并执行 CRC32 校验
    */
   public reload(): LoadResult {
-    const res = this.storage.loadWithIntegrity();
-    if (res.success) {
-      this.tables.clear();
-      for (const [name, tableData] of Object.entries(res.payload.tables)) {
-        const table = new Table(tableData.schema, tableData.next_id);
-        table.loadData(tableData.records, tableData.next_id);
-        this.tables.set(name, table);
-      }
-    }
-    return res;
+    return this.init(false);
   }
 
   /**

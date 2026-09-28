@@ -20,6 +20,12 @@ export interface NodeDBConfig {
     enableFsync: boolean;
     /** 是否启用原子写入 (.tmp -> fsync -> rename) */
     enableAtomicWrite: boolean;
+    /** 是否启用灾难备份 (.bak)，默认严格关闭以节省小内存/小磁盘服务器开销与I/O延迟 */
+    enableBackup: boolean;
+    /** 块级分页存储单块目标行数 (默认 500 行，单块仅 ~16KB-64KB，实现启动零OOM) */
+    chunkRowSize: number;
+    /** 最大内存预算 (MB) */
+    maxMemoryMb: number;
     /** 独占锁超时判定时间 (毫秒)，防止死锁 */
     lockTimeoutMs: number;
   };
@@ -64,6 +70,9 @@ export const DEFAULT_CONFIG: NodeDBConfig = {
     enableCrc32: true,
     enableFsync: true,
     enableAtomicWrite: true,
+    enableBackup: false,
+    chunkRowSize: 500,
+    maxMemoryMb: 32,
     lockTimeoutMs: 30000
   },
   index: {
