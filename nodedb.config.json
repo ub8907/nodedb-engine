@@ -1,0 +1,28 @@
+{
+  "storage": {
+    "dataPath": "./data/nodedb.dat",
+    "backupPath": "./data/nodedb.dat.bak",
+    "lockPath": "./data/nodedb.dat.lock",
+    "tempPath": "./data/nodedb.dat.tmp",
+    "enableCrc32": true,
+    "enableFsync": true,
+    "enableAtomicWrite": true,
+    "lockTimeoutMs": 30000
+  },
+  "index": {
+    "defaultBTreeDegree": 3,
+    "rebuildOnStartup": true,
+    "uniqueHashCapacity": 1024
+  },
+  "autoIncrement": {
+    "initialNextId": 1,
+    "strictlyNeverReuse": true,
+    "persistInStorage": true
+  },
+  "base62ShortKey": {
+    "autoGenerateOnInsert": true,
+    "timePartLength": 9,
+    "entropyPartLength": 4,
+    "maxCollisionRetries": 10
+  }
+}

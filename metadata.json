@@ -1,0 +1,8 @@
+{
+  "name": "NodeDB Engine & Studio",
+  "description": "High-performance Node.js storage engine featuring self-implemented B-Trees, secondary range indices, base62 time-ordered keys, CRC32 atomic storage, and crash recovery.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
