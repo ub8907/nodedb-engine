@@ -724,6 +724,27 @@ export class Table<T extends Record<string, any> = Record<string, any>> {
     }
 
     const pkCol = this.schema.primaryKeyColumn;
+
+    // 对于已分块的物理表且无脏数据，仅重整稀疏块索引，绝不执行全表全量深拷贝，杜绝几百万行撑爆 RAM
+    if (this.chunks.length > 0 && this.dirtyRecords.size === 0) {
+      for (const chk of this.chunks) {
+        if (chk.minPk !== null && chk.minPk !== undefined) {
+          this.pkBTree.insert(chk.minPk, { [pkCol]: chk.minPk } as any);
+        }
+        if (chk.maxPk !== null && chk.maxPk !== undefined && chk.maxPk !== chk.minPk) {
+          this.pkBTree.insert(chk.maxPk, { [pkCol]: chk.maxPk } as any);
+        }
+      }
+      const durationMs = Number((performance.now() - startTime).toFixed(2));
+      return {
+        totalRecords: this.rowCount,
+        durationMs,
+        reorganizedPages: this.chunks.length,
+        reclaimedBytes: 0,
+        diskIndexes: []
+      };
+    }
+
     const all = this.getAllRecords();
 
     for (const record of all) {

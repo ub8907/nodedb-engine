@@ -235,6 +235,20 @@ app.delete('/api/db/table/:name', (req, res) => {
   }
 });
 
+// 恢复默认测试表数据 (POST /api/db/restore-defaults)
+app.post('/api/db/restore-defaults', (req, res) => {
+  try {
+    globalDb.restoreDefaultTables();
+    res.json({
+      success: true,
+      message: '已成功恢复默认测试表数据 (customers, orders, metrics_log)',
+      tables: globalDb.listTables()
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // 修改数据表 Schema 接口 (添加/删除字段与索引)
 const handleSchemaUpdate = (req: any, res: any) => {
   try {
@@ -645,6 +659,20 @@ app.post('/api/db/import/chunk', (req, res) => {
   }
 });
 
+// 追加大文件原生二进制分块数据 (POST /api/db/import/chunk-binary?jobId=xxx)
+app.post('/api/db/import/chunk-binary', express.raw({ type: 'application/octet-stream', limit: '50mb' }), (req, res) => {
+  try {
+    const jobId = (req.query.jobId as string) || (req.headers['x-job-id'] as string);
+    if (!jobId || !req.body || !Buffer.isBuffer(req.body)) {
+      return res.status(400).json({ error: '缺少 jobId 或无效二进制载荷' });
+    }
+    backgroundImporter.appendChunkBinary(jobId, req.body);
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // 完成上传并启动后台零OOM流式解析写入 (POST /api/db/import/finish)
 app.post('/api/db/import/finish', (req, res) => {
   try {
@@ -655,8 +683,7 @@ app.post('/api/db/import/finish', (req, res) => {
     backgroundImporter.startProcessing(
       globalDb,
       jobId,
-      fileType || 'json',
-      () => saveToDisk(serializeAllTables())
+      fileType || 'json'
     );
     res.json({ success: true, message: '后台流式解析与盘索引构建任务已启动' });
   } catch (err: any) {

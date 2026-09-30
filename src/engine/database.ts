@@ -170,6 +170,14 @@ export class Database {
   }
 
   /**
+   * 恢复默认测试表数据
+   */
+  public restoreDefaultTables(): void {
+    this.seedDefaultTables();
+    this.save();
+  }
+
+  /**
    * 预填充示例演示表 (订单表 orders 与 传感器指标表 metrics_log)
    */
   public seedDefaultTables(): void {

@@ -121,34 +121,22 @@ export const LargeFileImporterModal: React.FC<LargeFileImporterModalProps> = ({
       const currentJobId = initData.jobId;
       setJobId(currentJobId);
 
-      // 2. 分片上传 (每片 1.5 MB，零内存 OOM 风险)
-      const chunkSize = 1.5 * 1024 * 1024;
+      // 2. 原生二进制流式分片上传 (每片 2.5 MB，原生 Blob 零 Base64 膨胀，零浏览器与容器内存激增)
+      const chunkSize = 2.5 * 1024 * 1024;
       const totalSize = selectedFile.size;
       let offset = 0;
       let chunkIndex = 0;
-      const totalChunks = Math.ceil(totalSize / chunkSize);
 
       while (offset < totalSize) {
         const slice = selectedFile.slice(offset, offset + chunkSize);
-        const arrayBuffer = await slice.arrayBuffer();
-        
-        // 转 Base64
-        const uint8Array = new Uint8Array(arrayBuffer);
-        let binaryString = '';
-        const len = uint8Array.byteLength;
-        for (let i = 0; i < len; i += 10240) {
-          const sub = uint8Array.subarray(i, i + 10240);
-          binaryString += String.fromCharCode.apply(null, sub as any);
-        }
-        const chunkBase64 = btoa(binaryString);
 
-        const chunkRes = await fetch('/api/db/import/chunk', {
+        const chunkRes = await fetch(`/api/db/import/chunk-binary?jobId=${currentJobId}`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ jobId: currentJobId, chunkBase64 })
+          headers: { 'Content-Type': 'application/octet-stream' },
+          body: slice
         });
         if (!chunkRes.ok) {
-          const errData = await chunkRes.json();
+          const errData = await chunkRes.json().catch(() => ({}));
           throw new Error(errData.error || `上传分片 ${chunkIndex + 1} 失败`);
         }
 

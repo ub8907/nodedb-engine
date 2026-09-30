@@ -39,6 +39,21 @@ export function crc32(input: string | Uint8Array): number {
   return ((crc ^ 0xFFFFFFFF) >>> 0);
 }
 
+export function crc32Init(): number {
+  return 0xFFFFFFFF;
+}
+
+export function crc32Update(crc: number, chunk: Uint8Array): number {
+  for (let i = 0; i < chunk.length; i++) {
+    crc = (crc >>> 8) ^ CRC32_TABLE[(crc ^ chunk[i]) & 0xFF];
+  }
+  return crc >>> 0;
+}
+
+export function crc32Final(crc: number): number {
+  return ((crc ^ 0xFFFFFFFF) >>> 0);
+}
+
 /**
  * 将 CRC32 校验和格式化为 8 位标准大写十六进制字符串（例如："0x7F2A34C9"）
  * @param input 输入数据

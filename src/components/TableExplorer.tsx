@@ -308,16 +308,40 @@ export const TableExplorer: React.FC<TableExplorerProps> = ({
 
         <div className="flex items-center gap-2">
           {onCreateTable && (
-            <button
-              onClick={() => {
-                setCreateTableError(null);
-                setShowCreateTableModal(true);
-              }}
-              className="px-3 py-1.5 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-500 rounded-md transition-colors flex items-center gap-1.5 shadow-sm whitespace-nowrap cursor-pointer"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              <span>{t.createTableBtn}</span>
-            </button>
+            <>
+              <button
+                onClick={() => {
+                  setCreateTableError(null);
+                  setShowCreateTableModal(true);
+                }}
+                className="px-3 py-1.5 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-500 rounded-md transition-colors flex items-center gap-1.5 shadow-sm whitespace-nowrap cursor-pointer"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>{t.createTableBtn}</span>
+              </button>
+
+              <button
+                onClick={async () => {
+                  if (confirm(lang === 'zh' ? '确定要一键恢复默认测试表数据 (customers, orders, metrics_log) 吗？这会重建演示表与初始数据。' : 'Restore default test tables? This will reset demo tables and data.')) {
+                    try {
+                      const res = await fetch('/api/db/restore-defaults', { method: 'POST' });
+                      if (res.ok) {
+                        onRefresh();
+                      } else {
+                        const data = await res.json();
+                        alert(data.error || '恢复失败');
+                      }
+                    } catch (err: any) {
+                      alert(err.message || '恢复失败');
+                    }
+                  }
+                }}
+                className="px-3 py-1.5 text-xs font-semibold text-slate-200 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-md transition-colors flex items-center gap-1.5 shadow-sm whitespace-nowrap cursor-pointer"
+                title={lang === 'zh' ? '一键恢复原始默认测试表数据' : 'Restore default test tables'}
+              >
+                <span>🔄 {lang === 'zh' ? '恢复默认表' : 'Restore Defaults'}</span>
+              </button>
+            </>
           )}
 
           {schema && (
