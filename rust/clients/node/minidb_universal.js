@@ -9,11 +9,48 @@
 
 import { spawn } from 'child_process';
 import readline from 'readline';
+import fs from 'fs';
+import path from 'path';
+
+/**
+ * 跨平台智能自动探测定位 minidb-cli 二进制文件路径
+ * 兼容 Windows / Linux / macOS 以及统一部署目录 rust/dist/
+ */
+export function resolveMiniDBBinaryPath(customPath) {
+  if (customPath && fs.existsSync(customPath)) {
+    return customPath;
+  }
+
+  const isWin = process.platform === 'win32';
+  const exeName = isWin ? 'minidb-cli.exe' : 'minidb-cli';
+  const platformFolder = isWin ? 'win-x64' : (process.platform === 'darwin' ? (process.arch === 'arm64' ? 'mac-arm64' : 'mac-x64') : 'linux-x64');
+
+  const candidates = [
+    // 1. 统一跨平台分发目录 rust/dist/<platform>/minidb-cli(.exe)
+    path.resolve(process.cwd(), 'rust/dist', platformFolder, exeName),
+    path.resolve(process.cwd(), 'dist', platformFolder, exeName),
+    // 2. 交叉编译输出目录 rust/target/<target>/release/
+    path.resolve(process.cwd(), 'rust/target/x86_64-pc-windows-gnu/release', exeName),
+    path.resolve(process.cwd(), 'rust/target/x86_64-unknown-linux-musl/release', exeName),
+    // 3. 本地原生编译目录 rust/target/release/
+    path.resolve(process.cwd(), 'rust/target/release', exeName),
+    // 4. 当前运行目录或 PATH
+    exeName
+  ];
+
+  for (const c of candidates) {
+    if (fs.existsSync(c)) {
+      return c;
+    }
+  }
+
+  return exeName;
+}
 
 export class MiniDBClient {
-  constructor(dbPath, binPath = 'minidb-cli') {
+  constructor(dbPath, binPath) {
     this.dbPath = dbPath;
-    this.binPath = binPath;
+    this.binPath = resolveMiniDBBinaryPath(binPath);
     this.process = null;
     this.rl = null;
     this.pendingRequests = new Map();

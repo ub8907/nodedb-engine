@@ -1,0 +1,15 @@
+# MiniDB-RS 跨平台与交叉编译配置文件
+# 无论在 Windows 还是 Linux 下，都能方便地进行构建与跨平台编译
+
+# Linux -> Windows (x86_64-pc-windows-gnu) 交叉编译工具链
+[target.x86_64-pc-windows-gnu]
+linker = "x86_64-w64-mingw32-gcc"
+ar = "x86_64-w64-mingw32-gcc-ar"
+
+# Linux 纯静态 musl 编译 (生成不依赖任何系统动态链接库的自包含二进制)
+[target.x86_64-unknown-linux-musl]
+linker = "musl-gcc"
+
+# 默认全局编译优化：采用通用 CPU 指令集保证分发兼容性
+[build]
+rustflags = ["-C", "target-cpu=generic"]

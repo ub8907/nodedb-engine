@@ -10,7 +10,8 @@
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
     "start": "node server.ts",
-    "db:import": "tsx scripts/import-cli.ts"
+    "db:import": "tsx scripts/import-cli.ts",
+    "build:rust": "node scripts/build-rust.js"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

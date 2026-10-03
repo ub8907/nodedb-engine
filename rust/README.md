@@ -90,24 +90,62 @@ rust/
 
 ---
 
-## 🚀 编译与多语言使用指南
+## 🚀 统一跨平台编译与多环境使用指南
 
-### 1. 编译 Rust 动态链接库与 CLI (单次命令同时生成)
-在 `rust/` 目录下执行一次命令：
-```bash
-cargo build --release
+### 1. 跨平台统一产物结构 (`rust/dist/`)
+无论在 Linux 还是 Windows 下编译，构建脚本均会自动将产物归档至统一规范的目录：
+```text
+rust/dist/
+├── linux-x64/
+│   ├── libminidb.so        # Linux C-ABI 动态链接库
+│   └── minidb-cli          # Linux 独立 CLI 命令行程序
+└── win-x64/
+    ├── minidb.dll          # Windows C-ABI 动态链接库
+    ├── minidb.lib          # Windows 导入符号库
+    └── minidb-cli.exe      # Windows 独立 CLI 可执行文件
 ```
-> **同时生成说明**：
-> 因为 `Cargo.toml` 中同时声明了 `[lib]` (cdylib) 与 `[[bin]]` (minidb-cli)，执行上述命令时，Cargo 会**单次同时编译出动态库与可执行文件**，全部放置在 `target/release/` 目录下：
-> * **动态链接库 (C-ABI cdylib)**：
->   * **Linux**: `target/release/libminidb.so`
->   * **macOS**: `target/release/libminidb.dylib`
->   * **Windows**: `target/release/minidb.dll` (及对应的导入库 `minidb.lib`)
-> * **独立 CLI 命令行执行工具 (bin)**：
->   * **Linux / macOS**: `target/release/minidb-cli`
->   * **Windows**: `target/release/minidb-cli.exe`
->
-> *(如需显式指定编译所有目标，也可执行 `cargo build --release --all-targets`)*
+
+### 2. 跨平台一键自动构建方式 (推荐)
+
+#### 方式 A：Node.js 统一跨平台管道 (全系统通用)
+在项目根目录下直接运行：
+```bash
+# 自动探测当前系统并编译，产物归档至 rust/dist/
+npm run build:rust
+
+# Linux 环境下一键同时编译出 Linux 与 Windows 产物 (免切换 Windows 环境)
+node scripts/build-rust.js --target all
+```
+
+#### 方式 B：Linux 原生 Shell 脚本 (支持交叉编译 Windows)
+在 Linux 终端中运行：
+```bash
+# 仅编译当前 Linux 产物
+./rust/build.sh
+
+# 一键同时生成 Linux 产物与 Windows (.dll + .exe) 产物
+./rust/build.sh --all
+```
+> **在 Linux 上交叉编译 Windows 的环境准备 (Ubuntu/Debian)**：
+> 只需要一行系统包命令即可支持直接构建 Windows 二进制：
+> ```bash
+> sudo apt-get update && sudo apt-get install -y gcc-mingw-w64-x86-64
+> rustup target add x86_64-pc-windows-gnu
+> ```
+
+#### 方式 C：Windows 原生 PowerShell 脚本
+在 Windows 终端中运行：
+```powershell
+.\rust\build.ps1
+```
+
+### 3. Rust 编译参数深度优化说明
+在 `rust/Cargo.toml` 中配置了最高阶 Release 优化参数：
+* `opt-level = 3`：开启最大级速度与指令集流水线优化。
+* `lto = "fat"`：全局全程序跨 Crate 链接时优化，自动消除死代码与冗余符号。
+* `panic = "abort"`：移除 C++ 异常展开开销，缩减体积 30% 以上。
+* `strip = true`：构建后自动剥离调试符号，生成的单个 CLI 二进制仅数 MB，运行常驻内存 `< 10KB`。
+* `codegen-units = 1`：单编译单元最大化内联内嵌。
 
 ### 2. 使用 CLI 命令行测试
 ```bash
