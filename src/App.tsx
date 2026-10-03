@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Header, ActiveTab } from './components/Header';
+import { ActiveTab } from './components/Header';
+import { Sidebar } from './components/Sidebar';
 import { TableExplorer } from './components/TableExplorer';
 import { QueryRunner } from './components/QueryRunner';
 import { BTreeVisualizer } from './components/BTreeVisualizer';
@@ -285,32 +286,28 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans">
-      {/* Top Bar Contract (3 zones) */}
-      <Header
+    <div className="flex h-screen bg-slate-950 text-slate-100 overflow-hidden font-sans">
+      {/* Left Sidebar Navigation */}
+      <Sidebar
         activeTab={activeTab}
         setActiveTab={setActiveTab}
         lang={lang}
         setLang={setLang}
         onAtomicSave={handleAtomicSave}
-        onResetDb={handleResetDb}
         saving={saving}
-        crcStatus={{
-          expected: dbStatus.expectedCrc,
-          actual: dbStatus.actualCrc,
-          isCorrupt: dbStatus.isFileCorrupt
-        }}
+        onOpenImporter={() => setShowLargeFileImporter(true)}
       />
 
-      {/* Toast Notification */}
-      {toastMessage && (
-        <div className="fixed bottom-5 right-5 z-50 bg-indigo-600 text-white text-xs font-medium px-4 py-2.5 rounded-lg shadow-xl border border-indigo-400/30 flex items-center gap-2 animate-in fade-in slide-in-from-bottom-2">
-          <span>{toastMessage}</span>
-        </div>
-      )}
+      {/* Right Main Content Area */}
+      <div className="flex-1 flex flex-col min-w-0 overflow-y-auto">
+        {/* Toast Notification */}
+        {toastMessage && (
+          <div className="fixed bottom-5 right-5 z-50 bg-indigo-600 text-white text-xs font-medium px-4 py-2.5 rounded-lg shadow-xl border border-indigo-400/30 flex items-center gap-2 animate-in fade-in slide-in-from-bottom-2">
+            <span>{toastMessage}</span>
+          </div>
+        )}
 
-      {/* Main Content Area */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
+        <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
         {activeTab === 'explorer' && (
           <TableExplorer
             lang={lang}
@@ -445,6 +442,7 @@ export default function App() {
           </div>
         </div>
       </footer>
+      </div>
     </div>
   );
 }

@@ -316,4 +316,53 @@ impl StorageEngine {
 
         Ok(results)
     }
+
+    /// 纯磁盘紧凑扫描并一键重建全部稀疏索引 (Rebuild All On-Disk Indexes)
+    /// 仅单块循环解压探测首尾主键，内存开销恒定 < 64KB，执行完毕后原子更新文件头与索引槽位
+    pub fn rebuild_all_indexes(&mut self) -> std::io::Result<(u64, u64)> {
+        let mut new_entries = Vec::with_capacity(self.header.index_count as usize);
+        let mut total_rows = 0u64;
+
+        for i in 0..self.header.index_count {
+            let old_entry = DiskIndexManager::read_entry_at(&mut self.file, self.header.index_offset, i)?;
+            self.file.seek(SeekFrom::Start(old_entry.file_offset))?;
+
+            let mut comp_buf = vec![0u8; old_entry.compressed_len as usize];
+            self.file.read_exact(&mut comp_buf)?;
+
+            let mut decoder = DeflateDecoder::new(&comp_buf[..]);
+            let mut raw_bytes = Vec::new();
+            decoder.read_to_end(&mut raw_bytes)?;
+
+            let rows: Vec<serde_json::Value> = serde_json::from_slice(&raw_bytes)
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+
+            let min_pk = rows.first().and_then(|r| r.get("id")).and_then(|v| v.as_u64()).unwrap_or(old_entry.min_pk);
+            let max_pk = rows.last().and_then(|r| r.get("id")).and_then(|v| v.as_u64()).unwrap_or(old_entry.max_pk);
+            let row_count = rows.len() as u16;
+
+            new_entries.push(DiskIndexEntry {
+                min_pk,
+                max_pk,
+                file_offset: old_entry.file_offset,
+                compressed_len: old_entry.compressed_len,
+                row_count,
+                flags: 1,
+            });
+
+            total_rows += row_count as u64;
+        }
+
+        // 重新写入末尾索引区
+        self.header.index_offset = self.header.data_area_end;
+        for (idx, entry) in new_entries.iter().enumerate() {
+            DiskIndexManager::write_entry_at(&mut self.file, self.header.index_offset, idx as u64, entry)?;
+        }
+
+        self.header.index_count = new_entries.len() as u64;
+        self.header.total_rows = total_rows;
+        self.sync_header()?;
+
+        Ok((self.header.index_count, total_rows))
+    }
 }

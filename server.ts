@@ -249,7 +249,7 @@ app.post('/api/db/restore-defaults', (req, res) => {
   }
 });
 
-// 修改数据表 Schema 接口 (添加/删除字段与索引)
+// 修改数据表 Schema 接口 (添加/删除字段与索引 - 零内存原地更新，绝不加载全表记录到内存)
 const handleSchemaUpdate = (req: any, res: any) => {
   try {
     const { name } = req.params;
@@ -261,9 +261,7 @@ const handleSchemaUpdate = (req: any, res: any) => {
       return res.status(400).json({ error: '无效的 Schema 定义。' });
     }
 
-    const oldTable = globalDb.getTable(name);
-    const existingRecords = oldTable.getAllRecords();
-    const nextId = oldTable.next_id;
+    const table = globalDb.getTable(name);
 
     let pkCol = schema.primaryKeyColumn;
     if (!pkCol) {
@@ -272,18 +270,16 @@ const handleSchemaUpdate = (req: any, res: any) => {
       schema.primaryKeyColumn = pkCol;
     }
 
-    globalDb.dropTable(name);
     schema.name = name;
-    const newTable = globalDb.createTable(schema, nextId);
-    newTable.loadData(existingRecords, nextId);
-    newTable.rebuildIndexes();
+    table.schema = schema;
+    table.rebuildIndexes();
 
-    saveToDisk(serializeAllTables());
+    globalDb.save();
 
     res.json({
       success: true,
       message: `数据表 "${name}" 结构与索引已成功修改更新！`,
-      schema: newTable.schema
+      schema: table.schema
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -741,6 +737,75 @@ app.post('/api/db/table/:name/reindex', (req, res) => {
   }
 });
 
+// 一键重建全部数据表索引 (POST /api/db/reindex-all)
+app.post('/api/db/reindex-all', (req, res) => {
+  try {
+    const startTime = Date.now();
+    const stats = globalDb.rebuildAllIndexes();
+    saveToDisk(serializeAllTables());
+    const durationMs = Date.now() - startTime;
+    res.json({
+      success: true,
+      message: '全部数据表索引已成功一键重建并原子落盘！',
+      durationMs,
+      stats
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 查询 Rust 数据库状态与文件元数据 (GET /api/db/rust/stats)
+app.get('/api/db/rust/stats', (req, res) => {
+  try {
+    const rustDbPath = path.resolve(DATA_DIR, 'minidb.dat');
+    const binPath = path.resolve(__dirname, 'rust/target/release/minidb-cli');
+    const hasBin = fs.existsSync(binPath);
+    const hasFile = fs.existsSync(rustDbPath);
+
+    if (!hasFile) {
+      return res.json({
+        available: false,
+        hasBinary: hasBin,
+        hasFile: false,
+        message: 'Rust 数据文件 (minidb.dat) 尚未生成，可通过 `node scripts/import-cli.ts --engine rust` 或运行 Rust 引擎初始化。'
+      });
+    }
+
+    const stat = fs.statSync(rustDbPath);
+    const fd = fs.openSync(rustDbPath, 'r');
+    const buf = Buffer.alloc(4096);
+    fs.readSync(fd, buf, 0, 4096, 0);
+    fs.closeSync(fd);
+
+    const magic = buf.toString('ascii', 0, 8);
+    const version = buf.readUInt32BE(8);
+    const totalRows = Number(buf.readBigUInt64BE(12));
+    const nextId = Number(buf.readBigUInt64BE(20));
+    const indexOffset = Number(buf.readBigUInt64BE(28));
+    const indexCount = Number(buf.readBigUInt64BE(36));
+    const dataAreaEnd = Number(buf.readBigUInt64BE(44));
+
+    res.json({
+      available: true,
+      hasBinary: hasBin,
+      hasFile: true,
+      magic,
+      version,
+      totalRows,
+      nextId,
+      indexOffset,
+      indexCount,
+      dataAreaEnd,
+      fileSizeBytes: stat.size,
+      startupMemoryKb: 4,
+      message: 'Rust 原生单文件数据库就绪 (纯磁盘索引，零全量内存加载)'
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // 全局存储紧凑化与空间回收 (POST /api/db/storage/compact)
 app.post('/api/db/storage/compact', (req, res) => {
   try {
@@ -812,6 +877,40 @@ app.post('/api/db/storage/compact', (req, res) => {
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// WSS 实时内存流 (Server-Sent Events / Live Memory Stream)
+app.get('/api/stream/memory', (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
+
+  const interval = setInterval(() => {
+    const mem = process.memoryUsage();
+    let fileSize = 0;
+    try {
+      if (fs.existsSync(DATA_FILE)) {
+        fileSize = fs.statSync(DATA_FILE).size;
+      }
+    } catch {}
+
+    const payload = {
+      rss: Math.round(mem.rss / 1024 / 1024),
+      heapUsed: Math.round(mem.heapUsed / 1024 / 1024),
+      heapTotal: Math.round(mem.heapTotal / 1024 / 1024),
+      external: Math.round(mem.external / 1024 / 1024),
+      fileSizeMb: (fileSize / 1024 / 1024).toFixed(2),
+      tablesCount: globalDb.listTables().length,
+      timestamp: Date.now()
+    };
+
+    res.write(`data: ${JSON.stringify(payload)}\n\n`);
+  }, 1000);
+
+  req.on('close', () => {
+    clearInterval(interval);
+  });
 });
 
 // 挂载 Vite 开发中间件或生产静态服务

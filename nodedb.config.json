@@ -27,5 +27,10 @@
     "timePartLength": 9,
     "entropyPartLength": 4,
     "maxCollisionRetries": 10
+  },
+  "engine": {
+    "activeEngine": "node",
+    "rustBinaryPath": "./rust/target/release/minidb-cli",
+    "rustDataPath": "./data/minidb.dat"
   }
 }

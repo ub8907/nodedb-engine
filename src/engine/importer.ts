@@ -16,6 +16,7 @@ import type { TableSchema } from './table.ts';
 export interface ImportJob {
   jobId: string;
   tableName: string;
+  mode?: 'create' | 'append';
   status: 'PENDING' | 'UPLOADING' | 'PROCESSING' | 'COMPLETED' | 'FAILED';
   totalRows: number;
   importedRows: number;
@@ -101,6 +102,7 @@ export class BackgroundImporter {
     const job: ImportJob = {
       jobId,
       tableName,
+      mode,
       status: 'UPLOADING',
       totalRows: 0,
       importedRows: 0,
@@ -211,6 +213,16 @@ export class BackgroundImporter {
     let batchBuffer: any[] = [];
     let autoIncId = 1;
 
+    const isAppendMode = job.mode === 'append' && db.hasTable(job.tableName);
+    if (isAppendMode) {
+      const existingTable = db.getTable(job.tableName);
+      schema = existingTable.schema;
+      pkCol = schema.primaryKeyColumn;
+      cols = schema.columns.map(c => c.name);
+      autoIncId = existingTable.next_id;
+      writer = db.storageManager.createStreamingChunkWriter(cols, pkCol, chunksFilePath);
+    }
+
     for await (const line of rl) {
       const trimmed = line.trim();
       if (!trimmed) continue;
@@ -308,7 +320,7 @@ export class BackgroundImporter {
     const targetNextId = typeof maxPk === 'number' ? Math.max(autoIncId, maxPk + 1) : autoIncId;
     const allTables: Record<string, any> = {};
     for (const name of db.listTables()) {
-      if (name !== job.tableName) {
+      if (name !== job.tableName || isAppendMode) {
         allTables[name] = db.getTable(name).serializeForStorage();
       }
     }
@@ -321,21 +333,27 @@ export class BackgroundImporter {
       cols,
       chunks,
       chunksFilePath,
-      allTables
+      allTables,
+      { appendMode: isAppendMode }
     );
 
     // 清理独立的物理分块临时文件
     this.cleanup(chunksFilePath);
 
     // 在 Database 中轻量挂载表与稀疏块索引 (内存开销 < 50KB)
-    if (db.hasTable(job.tableName)) {
-      db.dropTable(job.tableName);
+    if (isAppendMode) {
+      const table = db.getTable(job.tableName);
+      table.initChunks(assembleResult.targetTableChunks, assembleResult.totalRowCount, db.storageManager);
+    } else {
+      if (db.hasTable(job.tableName)) {
+        db.dropTable(job.tableName);
+      }
+      const newTable = db.createTable(schema, targetNextId);
+      newTable.initChunks(assembleResult.targetTableChunks, totalRowCount, db.storageManager);
     }
-    const newTable = db.createTable(schema, targetNextId);
-    newTable.initChunks(assembleResult.targetTableChunks, totalRowCount, db.storageManager);
 
-    job.totalRows = totalRowCount;
-    job.importedRows = totalRowCount;
+    job.totalRows = assembleResult.totalRowCount;
+    job.importedRows = assembleResult.totalRowCount;
     job.progressPercent = 100;
     job.status = 'COMPLETED';
     job.endTime = Date.now();

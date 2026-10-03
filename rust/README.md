@@ -21,13 +21,16 @@ MiniDB-RS 是一个专为 **极低内存环境 (IoT 设备、Serverless、Cloud 
 * 写入数据时，每 500 行自动打包为一个物理分块，采用 Deflate Level 1 快速压缩（压缩率约 80%~95%，单块体积仅 16KB~64KB）。
 * 读取与分页时，**仅按需解压单个目标数据块**，单次查询峰值内存消耗恒定 `< 64 KB`。
 
-### 4. 标准 C-ABI 跨语言支持 (Multi-Language FFI)
-* 原生导出 `cdylib` 动态链接库，提供标准 C 头文件 (`include/minidb.h`)。
-* 任何支持 C-FFI 的编程语言均可无缝直接调用：
-  * **Node.js**（通过 `koffi` 或 `ffi-napi`）
-  * **Python**（通过标准库内置的 `ctypes`）
-  * **Go**（通过 `cgo`）
-  * **C / C++**（直接包含头文件链接）
+### 4. 真正「多语言共用，不需要单独构建」的架构方案 (Zero-Build Universal Protocol)
+* **传统原生绑定痛点**：通常 Node.js 需要 `node-gyp`、Python 需要 C 编译器与对应 Python 版本的 wheel、Go 需要开启 cgo 环境。任何一个环节缺失编译工具链就会报错，导致迁移极度痛苦。
+* **MiniDB 创新免构建方案**：
+  1. **单一静态二进制可执行文件 (`minidb-cli`)**：Rust 一次编译后打包为一个独立二进制，随项目分发。
+  2. **内置 Universal Stdio IPC 守护协议**：
+     * **Node.js** 使用内置 `node:child_process`（**0 个 npm 依赖，0 个 node-gyp，0 个编译步骤**）。
+     * **Python** 使用内置 `subprocess`（**0 个 pip 依赖，0 个 gcc/wheel**）。
+     * **Go** 使用标准库 `os/exec`（**0 个 cgo**）。
+  3. **内置 Local Micro-HTTP 模式 (`minidb serve`)**：
+     * 启动本地微服务后，任何语言直接通过原生 `fetch` / `curl` / `requests` 与数据库交互，实现跨进程、跨容器的极简调用。
 
 ---
 
@@ -43,11 +46,19 @@ rust/
 │   ├── index.rs                # 32 字节纯磁盘索引布局与原地二分检索
 │   ├── storage.rs              # 4KB 扇区对齐超级块、分块压缩与持久化
 │   ├── ffi.rs                  # 跨语言 C-ABI 函数导出 (minidb_open/insert/find...)
-│   └── main.rs                 # 独立 CLI 命令行执行器与性能压测工具
+│   └── main.rs                 # 包含 Stdio IPC、本地 HTTP 微服务与 CLI 工具
+├── clients/                    # 真正的多语言免构建客户端 (0 依赖，开箱即用)
+│   ├── node/
+│   │   └── minidb_universal.js # Node.js 原生客户端 (0 依赖，使用 child_process)
+│   ├── python/
+│   │   └── minidb_universal.py # Python 原生客户端 (0 依赖，使用 subprocess)
+│   ├── go/
+│   │   └── minidb_universal.go # Go 原生客户端 (0 依赖，无需 cgo)
+│   └── curl_examples.sh        # cURL / HTTP 请求示范脚本
 └── examples/
     ├── node_koffi_example.js   # Node.js 通过 C-FFI (koffi) 高性能调用示范
     ├── python_example.py       # Python 通过 ctypes 无依赖调用示范
-    └── node_zero_dep_runner.js # Node.js 纯原生零依赖测试套件 (可直接运行)
+    └── node_zero_dep_runner.js # Node.js 纯原生零依赖测试套件 (可直接运行验证)
 ```
 
 ---
@@ -81,16 +92,22 @@ rust/
 
 ## 🚀 编译与多语言使用指南
 
-### 1. 编译 Rust 动态链接库与 CLI
-在 `rust/` 目录下执行：
+### 1. 编译 Rust 动态链接库与 CLI (单次命令同时生成)
+在 `rust/` 目录下执行一次命令：
 ```bash
 cargo build --release
 ```
-编译后将在 `target/release/` 下生成：
-* Linux: `libminidb.so`
-* macOS: `libminidb.dylib`
-* Windows: `minidb.dll`
-* CLI 工具: `minidb-cli`
+> **同时生成说明**：
+> 因为 `Cargo.toml` 中同时声明了 `[lib]` (cdylib) 与 `[[bin]]` (minidb-cli)，执行上述命令时，Cargo 会**单次同时编译出动态库与可执行文件**，全部放置在 `target/release/` 目录下：
+> * **动态链接库 (C-ABI cdylib)**：
+>   * **Linux**: `target/release/libminidb.so`
+>   * **macOS**: `target/release/libminidb.dylib`
+>   * **Windows**: `target/release/minidb.dll` (及对应的导入库 `minidb.lib`)
+> * **独立 CLI 命令行执行工具 (bin)**：
+>   * **Linux / macOS**: `target/release/minidb-cli`
+>   * **Windows**: `target/release/minidb-cli.exe`
+>
+> *(如需显式指定编译所有目标，也可执行 `cargo build --release --all-targets`)*
 
 ### 2. 使用 CLI 命令行测试
 ```bash

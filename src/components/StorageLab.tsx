@@ -136,6 +136,24 @@ export const StorageLab: React.FC<StorageLabProps> = ({
     }
   };
 
+  const handleRebuildAllIndexes = async () => {
+    setProcessing(true);
+    setActionMessage(null);
+    try {
+      const res = await fetch('/api/db/reindex-all', { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Rebuild all failed');
+      setActionMessage(lang === 'zh'
+        ? `全部数据表索引已成功一键重建！耗时 ${data.durationMs}ms`
+        : `All table indexes successfully rebuilt in ${data.durationMs}ms`);
+      onRefresh();
+    } catch (err: any) {
+      setActionMessage(`Error: ${err.message}`);
+    } finally {
+      setProcessing(false);
+    }
+  };
+
   const handleRebuild = async () => {
     setProcessing(true);
     setActionMessage(null);
@@ -165,6 +183,15 @@ export const StorageLab: React.FC<StorageLabProps> = ({
           </div>
 
           <div className="flex items-center gap-2">
+            <button
+              onClick={handleRebuildAllIndexes}
+              disabled={processing}
+              className="px-3.5 py-1.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 rounded transition-colors flex items-center gap-1.5 shadow-sm cursor-pointer"
+              title={lang === 'zh' ? '一键重建全部数据表的 B-树与哈希索引' : 'Rebuild all table indexes'}
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              <span>{lang === 'zh' ? '一键重建全部索引' : 'Rebuild All Indexes'}</span>
+            </button>
             <button
               onClick={handleCompactStorage}
               disabled={processing}

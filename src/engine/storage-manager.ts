@@ -1177,8 +1177,11 @@ export class StorageManager {
     targetCols: string[],
     targetChunks: TableChunkMeta[],
     targetChunkFilePath: string,
-    allTables: Record<string, any>
-  ): { crc: string; totalBytes: number; totalChunks: number } {
+    allTables: Record<string, any>,
+    options?: {
+      appendMode?: boolean;
+    }
+  ): { crc: string; totalBytes: number; totalChunks: number; targetTableChunks: TableChunkMeta[]; totalRowCount: number } {
     this.acquireLock();
     try {
       const backupPath = `${this.filePath}.bak`;
@@ -1197,10 +1200,40 @@ export class StorageManager {
       const otherChunksBuffers: Buffer[] = [];
       let currentRelativeOffset = 0;
       let allChunksCount = 0;
+      const targetTableExistingChunks: TableChunkMeta[] = [];
+      let targetTableExistingRowCount = 0;
 
       // 现有其他数据表的分块 (直接从现存文件复制，避免任何反序列化与内存占用)
       for (const [tName, tbl] of Object.entries(allTables)) {
-        if (tName === targetTableName) continue;
+        if (tName === targetTableName) {
+          if (options?.appendMode) {
+            // 追加模式：提取并完整保留旧表的历史物理分块与主键边界
+            if (tbl.existingChunks && tbl.existingChunks.length > 0 && fs.existsSync(this.filePath)) {
+              const oldFd = fs.openSync(this.filePath, 'r');
+              for (const chk of tbl.existingChunks) {
+                const buf = Buffer.alloc(chk.compressedLen);
+                fs.readSync(oldFd, buf, 0, chk.compressedLen, chk.offset);
+                targetTableExistingChunks.push({
+                  chunkId: targetTableExistingChunks.length,
+                  rowCount: chk.rowCount,
+                  minPk: chk.minPk,
+                  maxPk: chk.maxPk,
+                  offset: currentRelativeOffset,
+                  compressedLen: chk.compressedLen,
+                  rawLen: chk.rawLen,
+                  crc32: chk.crc32
+                });
+                otherChunksBuffers.push(buf);
+                currentRelativeOffset += chk.compressedLen;
+                allChunksCount++;
+              }
+              fs.closeSync(oldFd);
+              targetTableExistingRowCount = tbl.rowCount || 0;
+            }
+          }
+          continue;
+        }
+
         const cols: string[] = tbl.cols || (tbl.schema?.columns ? tbl.schema.columns.map((c: any) => c.name) : []);
         const chunks: TableChunkMeta[] = [];
 
@@ -1259,10 +1292,11 @@ export class StorageManager {
       // 新导入的目标表分块
       const targetTableChunksAdjusted: TableChunkMeta[] = [];
       const targetChunkFileBytes = fs.existsSync(targetChunkFilePath) ? fs.statSync(targetChunkFilePath).size : 0;
+      const baseChunkId = targetTableExistingChunks.length;
 
       for (const chk of targetChunks) {
         targetTableChunksAdjusted.push({
-          chunkId: chk.chunkId,
+          chunkId: baseChunkId + chk.chunkId,
           rowCount: chk.rowCount,
           minPk: chk.minPk,
           maxPk: chk.maxPk,
@@ -1274,13 +1308,17 @@ export class StorageManager {
         allChunksCount++;
       }
 
+      const combinedTargetChunks = [...targetTableExistingChunks, ...targetTableChunksAdjusted];
+      const newlyImportedRows = targetChunks.reduce((acc, c) => acc + c.rowCount, 0);
+      const finalTargetRowCount = targetTableExistingRowCount + newlyImportedRows;
+
       catalog[targetTableName] = {
         name: targetTableName,
         schema: targetSchema,
         next_id: targetNextId,
         cols: targetCols,
-        rowCount: targetChunks.reduce((acc, c) => acc + c.rowCount, 0),
-        chunks: targetTableChunksAdjusted
+        rowCount: finalTargetRowCount,
+        chunks: combinedTargetChunks
       };
 
       // 2. 流式计算全体分块的 CRC32 (采用 64KB 循环缓冲，零内存)
@@ -1390,7 +1428,8 @@ export class StorageManager {
         crc: crcHex,
         totalBytes: writePos,
         totalChunks: allChunksCount,
-        targetTableChunks: catalog[targetTableName].chunks
+        targetTableChunks: catalog[targetTableName].chunks,
+        totalRowCount: catalog[targetTableName].rowCount
       };
     } finally {
       this.releaseLock();

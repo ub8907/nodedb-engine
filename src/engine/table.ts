@@ -859,27 +859,26 @@ export class Table<T extends Record<string, any> = Record<string, any>> {
   } {
     const cols = this.schema.columns.map(c => c.name);
 
-    // 若发生修改或无分块，全量提取记录用于重新分块序列化
-    if (this.dirtyRecords.size > 0 || this.deletedPks.size > 0 || this.chunks.length === 0) {
-      const records = this.getAllRecords();
+    // 零内存化保护：只要存在 chunks，绝对不全量加载 records 到内存！
+    if (this.chunks.length > 0) {
       return {
         name: this.name,
         schema: this.schema,
         next_id: this.next_id,
-        records,
-        rowCount: records.length,
+        records: [],
+        existingChunks: this.chunks,
+        rowCount: this.rowCount,
         cols
       };
     }
 
-    // 未修改时直接复用磁盘分块，零内存拷贝！
+    const records = this.getAllRecords();
     return {
       name: this.name,
       schema: this.schema,
       next_id: this.next_id,
-      records: [],
-      existingChunks: this.chunks,
-      rowCount: this._cachedRowCount,
+      records,
+      rowCount: records.length,
       cols
     };
   }

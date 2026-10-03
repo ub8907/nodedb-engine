@@ -190,6 +190,37 @@ pub unsafe extern "C" fn minidb_get_stats(
     bytes.len() as c_int
 }
 
+/// 纯磁盘一键重建全部稀疏索引
+#[no_mangle]
+pub unsafe extern "C" fn minidb_rebuild_indexes(
+    handle: *mut MiniDBHandle,
+    out_reindexed_chunks: *mut u64,
+    out_total_rows: *mut u64,
+) -> c_int {
+    if handle.is_null() {
+        return -1;
+    }
+
+    let handle_ref = &*handle;
+    let mut engine = match handle_ref.inner.lock() {
+        Ok(guard) => guard,
+        Err(_) => return -2,
+    };
+
+    match engine.rebuild_all_indexes() {
+        Ok((chunks, rows)) => {
+            if !out_reindexed_chunks.is_null() {
+                *out_reindexed_chunks = chunks;
+            }
+            if !out_total_rows.is_null() {
+                *out_total_rows = rows;
+            }
+            0
+        }
+        Err(_) => -3,
+    }
+}
+
 /// 释放关闭数据库句柄
 #[no_mangle]
 pub unsafe extern "C" fn minidb_close(handle: *mut MiniDBHandle) {

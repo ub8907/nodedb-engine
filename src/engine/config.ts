@@ -58,6 +58,15 @@ export interface NodeDBConfig {
     /** 发生唯一索引冲突时的最大重试次数 */
     maxCollisionRetries: number;
   };
+  /** 底层数据库执行引擎配置 (支持 Node.js V4 块级流与 Rust 原生引擎切换) */
+  engine: {
+    /** 当前生效引擎: 'node' (Node.js V4 块级流) 或 'rust' (Rust 原生零内存嵌入式) */
+    activeEngine: 'node' | 'rust';
+    /** Rust 可执行文件路径 */
+    rustBinaryPath: string;
+    /** Rust 数据文件存储路径 */
+    rustDataPath: string;
+  };
 }
 
 /** 默认配置实例 */
@@ -90,5 +99,10 @@ export const DEFAULT_CONFIG: NodeDBConfig = {
     timePartLength: 9,
     entropyPartLength: 4,
     maxCollisionRetries: 10
+  },
+  engine: {
+    activeEngine: 'node',
+    rustBinaryPath: './rust/target/release/minidb-cli',
+    rustDataPath: './data/minidb.dat'
   }
 };

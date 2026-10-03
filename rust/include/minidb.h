@@ -82,6 +82,19 @@ int32_t minidb_get_stats(
 );
 
 /**
+ * 纯磁盘一键重建全部稀疏索引
+ * @param handle 数据库句柄
+ * @param out_reindexed_chunks 接收重建分块数量的指针
+ * @param out_total_rows 接收总行数的指针
+ * @return 0 表示成功，< 0 表示错误码
+ */
+int32_t minidb_rebuild_indexes(
+    MiniDBHandle* handle,
+    uint64_t* out_reindexed_chunks,
+    uint64_t* out_total_rows
+);
+
+/**
  * 关闭并释放数据库句柄
  * @param handle 数据库句柄
  */
